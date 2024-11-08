@@ -9,14 +9,24 @@ typedef unsigned char RGB[3];
 Vec3f operator+(const Vec3f& a, const Vec3f& b) {
     return {a.x + b.x, a.y + b.y, a.z + b.z};
 }
+Vec3f operator*(const Vec3f& a, const Vec3f& b) {
+    return {a.x * b.x, a.y * b.y, a.z * b.z};
+}
+Vec3f operator*(const Vec3f& b, const float a) {
+    return {a * b.x, a * b.y, a * b.z};
+}
+Vec3f operator*(const Vec3i& a, const Vec3f& b) {
+    return {a.x * b.x, a.y * b.y, a.z * b.z};
+}
+Vec3f operator*(const float a, const Vec3f& b) {
+    return {a * b.x, a * b.y, a * b.z};
+}
 
 Vec3f operator-(const Vec3f& a, const Vec3f& b) {
     return {a.x - b.x, a.y - b.y, a.z - b.z};
 }
 
-Vec3f operator*(const Vec3f& v, float s) {
-    return {v.x * s, v.y * s, v.z * s};
-}
+
 
 float dot(const Vec3f& a, const Vec3f& b) {
     return a.x * b.x + a.y * b.y + a.z * b.z;
@@ -51,8 +61,9 @@ struct HitRecord {
 
 
 class Ray {
-    Vec3f origin, direction;
+    
     public: 
+    Vec3f origin, direction;
         Ray(const Vec3f& orig, const Vec3f& dir) : origin(orig), direction(normalize(dir)) {}
 
     Vec3f getDirection() const { return direction; }
@@ -169,41 +180,42 @@ class Ray {
 
 ;
 
-Vec3f apply_shading(const Ray& ray, int depth, const HitRecord& hit, const Scene& scene){
+Vec3f compute_color( Ray& ray, int depth,  Scene& scene);
+Vec3f apply_shading( Ray& ray, int depth,  HitRecord& hit,  Scene& scene){
 
     Vec3f color = {0.0f, 0.0f, 0.0f};
     color = color + (scene.ambient_light * hit.material.ambient);
     Vec3f eyeVector = normalize(ray.origin - hit.intersection_point);
 
-    if (hit.material.is_mirror && depth < max_recursion_depth){
+    if (hit.material.is_mirror && depth < scene.max_recursion_depth){
         float cosTheta = dot(hit.normal, eyeVector);
-        Vec3f refRayDirection = eyeVector * (-1f) + hit.normal * (cosTheta * (2f));
-        Vec3f refRayOrigin = hit.intersection_point + (reflectedRay * (scene.shadow_ray_epsilon));
+        Vec3f refRayDirection = eyeVector * (-1.0f) + hit.normal * (cosTheta * (2.0f));
+        Vec3f refRayOrigin = hit.intersection_point + (refRayDirection * (scene.shadow_ray_epsilon));
         Ray reflectedRay(refRayDirection, refRayOrigin);
-        HitRecord reflectHit = reflectedRay.find_closest_hit;
+        HitRecord reflectHit = reflectedRay.find_closest_hit(scene);
         if (reflectHit.is_intersected && reflectHit.t>0.0f){
-            Vec3i refRayColor = compute_color(reflectedRay, depth+1, reflectHit, scene);
-            color = color + (refRayColor * hit.material);
+            Vec3f refRayColor = compute_color(reflectedRay, depth+1, scene);
+            color = color + (refRayColor * hit.material.mirror);
         }
     }
 
-    for (const PointLight& pointLight : scene.point_lights){
+    for ( PointLight& pointLight : scene.point_lights){
 
         Vec3f objToLight = pointLight.position - hit.intersection_point;
         if (dot(objToLight,hit.normal) < 0) continue;
-        else{
+        
 
             Vec3f normalOToL = normalize(objToLight);
             Vec3f shadowRayOrigin = hit.intersection_point + normalOToL * (scene.shadow_ray_epsilon);
             
             Ray shadowRay = Ray(shadowRayOrigin,normalOToL);
             HitRecord shadowHit = shadowRay.find_closest_hit(scene);
-
-            float distToLightSource = sqrt(normalOToL.x * normalOToL.x + normalOToL.y * normalOToL.y + normalOToL.z * normalOToL.z);
+            
+            float distToLightSource = sqrt(objToLight.x * objToLight.x + objToLight.y * objToLight.y + objToLight.z * objToLight.z);
             float minT =shadowHit.t;
-            Vec3f x = shadowHit.intersection_point - hit.intersection_point;
+            Vec3f vec = shadowHit.intersection_point - hit.intersection_point;
             float distance = sqrt(vec.x * vec.x + vec.y * vec.y + vec.z * vec.z);
-            if (minT > 0 && distance > distToLightSource || minT == numeric_limits<float>::infinity()) {
+            if ((minT > 0 && distance > distToLightSource) || minT == std::numeric_limits<float>::infinity()) {
                 
                 Vec3f irradiance = {0.0f, 0.0f, 0.0f};
                 if (distToLightSource>0){
@@ -214,27 +226,25 @@ Vec3f apply_shading(const Ray& ray, int depth, const HitRecord& hit, const Scene
 
 
                 Vec3f diffuseComponent = {0.0f, 0.0f, 0.0f};
-                float theta = max(0.0f, dot(hit.normal, normalOToL));
-                diffuseComponent.x = material.diffuse.x * irradiance.x * theta;
-                diffuseComponent.y = material.diffuse.y * irradiance.y * theta;
-                diffuseComponent.z = material.diffuse.z * irradiance.z * theta;
+                float clampedDotProduct = dot(hit.normal, normalOToL);
+                diffuseComponent.x = hit.material.diffuse.x * irradiance.x * clampedDotProduct;
+                diffuseComponent.y = hit.material.diffuse.y * irradiance.y * clampedDotProduct;
+                diffuseComponent.z = hit.material.diffuse.z * irradiance.z * clampedDotProduct;
+                printf("Burası diffuse:%f %f %f %f\n", clampedDotProduct, diffuseComponent.x, diffuseComponent.y, diffuseComponent.z);
 
                 Vec3f normalHalfwayVector = normalize(normalOToL + eyeVector);
                 Vec3f specularComponent = {0.0f, 0.0f, 0.0f};
-                float cosAlpha = max(0.0f, dot(hit.normal, normalHalfwayVector));
+                float cosAlpha = std::max(0.0f, dot(hit.normal, normalHalfwayVector));
                 float b = pow(cosAlpha, hit.material.phong_exponent);
-                specularComponent.x = material.specular.x * irradiance * b;
-                specularComponent.y = material.specular.y * irradiance * b;
-                specularComponent.z = material.specular.z * irradiance * b;
+                specularComponent.x = hit.material.specular.x * irradiance.x * b;
+                specularComponent.y = hit.material.specular.y * irradiance.y * b;
+                specularComponent.z = hit.material.specular.z * irradiance.z * b;
 
-                color = color + specularComponent + diffuseComponent;
+                color = (color + specularComponent) + diffuseComponent;
+                
 
 
             }
-
-        }
-        
-
 
     }
     return color;
@@ -242,7 +252,7 @@ Vec3f apply_shading(const Ray& ray, int depth, const HitRecord& hit, const Scene
 }
 
 
-Vec3i compute_color(const Ray& ray, int depth, const Scene& scene){
+Vec3f compute_color( Ray& ray, int depth,  Scene& scene){
 
     HitRecord hit = ray.find_closest_hit(scene);
     Vec3f zero = {0.0f, 0.0f, 0.0f};
@@ -252,11 +262,15 @@ Vec3i compute_color(const Ray& ray, int depth, const Scene& scene){
     }
 
     else if (hit.is_intersected==false) {
-        return scene.background_color;
+        zero.x = scene.background_color.x;
+        zero.y = scene.background_color.y;
+        zero.z = scene.background_color.z;
+        return zero;
     }
 
     else if (hit.is_intersected){
-        return applyShading(ray, depth, hit, scene);
+        
+        return apply_shading(ray, depth, hit, scene);
     }
     
     else {
@@ -273,7 +287,7 @@ int main()
 {
     // Sample usage for reading an XML scene file
     parser::Scene scene;
-    scene.loadFromXml("inputs/monkey.xml");
+    scene.loadFromXml("inputs/mirror_spheres.xml");
 
 
     int width = scene.cameras[0].image_width;
@@ -298,7 +312,7 @@ int main()
             image[i++] = roundedZ > 255 ? 255 : roundedZ;
         }
     }
-
+    
     write_ppm("monkey.ppm", image, width, height);
 
 }
